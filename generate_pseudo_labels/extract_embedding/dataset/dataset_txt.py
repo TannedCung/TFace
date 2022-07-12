@@ -17,6 +17,7 @@ class Dataset(data.Dataset):
         self.transform = conf.transform
         self.batch_size = conf.batch_size
         self.label = label
+        self.replace = conf.replace
         with open(self.img_list, 'r') as f:
             self.imgPath = []
             self.target = []
@@ -27,8 +28,8 @@ class Dataset(data.Dataset):
                     if value and len(value) < 2:                     # check data file
                         print(f"ERROR, {value}({index}-th) is missing, please check it")
                     else:
-                        self.imgPath.append(value[0])
-                        self.target.append(float(value[1]))
+                        self.imgPath.append(value[0].replace("_feature", "").replace(".npy", ".jpg").replace(self.replace[0], self.replace[1]))
+                        self.target.append(float(value[1])/100.)
                         self.classes.add(float(value[1]))                      
                 else:
                     self.imgPath.append(value[0])
@@ -41,7 +42,7 @@ class Dataset(data.Dataset):
         Data processing and output
         '''
         imgPath = self.imgPath[index]
-        img = Image.open(imgPath).convert("RGB")
+        img = Image.open(imgPath).convert("RGB").resize([112,112])
         if self.transform is not None: img = self.transform(img)    # data processing
         if self.label:                                              
             target = self.target[index]
@@ -52,12 +53,13 @@ class Dataset(data.Dataset):
     def __len__(self):
         return(len(self.imgPath))
                 
-def load_data(conf, label=True, train=False):                                     # build dataloder
+def load_data(conf, label=True, train=False, replaces=[]):                                     # build dataloder
     '''
     Build dataloader 
     Two parameters including "label" and "train" are used for the output of dataloader
     '''
     dataset = Dataset(conf, label)
+    print(dataset[0])
     if train:
         loader = DataLoader(dataset, 
                         batch_size=conf.batch_size, 

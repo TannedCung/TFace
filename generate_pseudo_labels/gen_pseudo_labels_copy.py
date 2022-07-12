@@ -9,15 +9,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import wasserstein_distance
 import torch
-
-def buildDict_people(featlist, chunk):      # Building data dictionary
+import time
+import threading
+from tqdm import tqdm
+ 
+def buildDict_people(featlist):      # Building data dictionary
     '''
     This method is to build data dictionary 
     for collecting positive and negative pair similarities
     '''
-    line_num = chunk[0]
-    num_people_listed = 0
-    last_person = ""
+    # line_num = chunk[0]
+    # num_people_listed = 0
+    # last_person = ""
 
     imgName = []
     peopleName = []
@@ -27,24 +30,24 @@ def buildDict_people(featlist, chunk):      # Building data dictionary
     # assert(len(datalist) == len(featlist)), "[ERROR]: length of image list not align with feature list"
     featsDict = {}
     # feats = np.zeros([len(featlist), 512])
-    i = 0
-    for i, d in enumerate(featlist[line_num:]): 
+    feats = np.load("/Data/feats_2m.npy")
+    for i, d in enumerate(tqdm(featlist)): 
         tmpName = "/"+"/".join(d.split()[0].split("/")[-3:])
         # tmpeopleName = tmpName.split('/')[-2]
         tmpeopleName = d.split()[1]
-        if tmpeopleName != last_person:
-            num_people_listed += 1
-            last_person = tmpeopleName
-        if num_people_listed > chunk[1]:
-            break
+        # if tmpeopleName != last_person:
+        #     num_people_listed += 1
+        #     last_person = tmpeopleName
+        # if num_people_listed > chunk[1]:
+        #     break
         imgName.append(tmpName)
-        this_feat = np.load(d.split()[0])
+        # this_feat = np.load(d.split()[0])
         # this_feat = featlist[i].split()[0]
-        featsDict[tmpName] = [this_feat, tmpeopleName, d]
+        featsDict[tmpName] = [d.split()[0], tmpeopleName, d]
         # feats[i] = this_feat
         peopleName.append(tmpeopleName)
         peopleList.add(tmpeopleName)
-    line_num += len(peopleName)
+    # line_num += len(peopleName)
     # feats = np.load(featsFile)
     peopleList = sorted(list(peopleList))
     # for index, value in enumerate(imgName):
@@ -52,15 +55,16 @@ def buildDict_people(featlist, chunk):      # Building data dictionary
     print('='*20 + 'LOADING DATALIST' + '='*20)
     print(f"People Number: {len(peopleList)}")
     print(f"Image Number: {len(peopleName)}")
-    # print(f"Features Shape: {np.shape(feats)}")
+    print(f"Features Shape: {np.shape(feats)}")
     print('='*56)
-    return line_num, featsDict, peopleList, peopleName
+    return featsDict, peopleList, peopleName, feats
 
 def getIndex(target_value, data_list):       # Search
     '''
     Search the index of sample by identity
     '''   
-    index = [i for i, v in enumerate(data_list) if v == target_value]
+    # index = [i for i, v in enumerate(data_list) if v == target_value]
+    index = np.where(data_list == target_value)[0]
     return index
 
 def cos(feats1, feats2):
@@ -71,7 +75,7 @@ def cos(feats1, feats2):
     cos = np.dot(feats1, feats2) / (np.linalg.norm(feats1) * np.linalg.norm(feats2))
     return cos
 
-def gen_samepeople_Similarity(featsDict, peopleList, peopleName, outfile_dist_info, fix_num=24):
+def gen_samepeople_Similarity(featsDict, peopleList, peopleName, feats, outfile_dist_info, fix_num=24):
     '''
     This method is to collect positive pair similarities
     '''
@@ -96,7 +100,7 @@ def gen_samepeople_Similarity(featsDict, peopleList, peopleName, outfile_dist_in
             for j in range(pick_num):
                 imgsame_list1.append(imgsName[index[i]])
                 imgsame_list2.append(imgsName[compared_index[j]])
-                embedding_similarity = cos(featsDict[imgsName[index[i]]][0], featsDict[imgsName[compared_index[j]]][0])
+                embedding_similarity = cos(feats[index[i]], feats[compared_index[j]])
                 same_similaritys.append(embedding_similarity)
                 similaritys.append(embedding_similarity)
                 id_similaritys.append(embedding_similarity)
@@ -119,7 +123,7 @@ def gen_samepeople_Similarity(featsDict, peopleList, peopleName, outfile_dist_in
     outfile_dist_info.write(f"Std of similarity value: {np.std(same_similaritys)}"+ '\n')
     return pos_similarity_dist, len(same_similaritys)
 
-def gen_diffpeople_Similarity(featsDict, peopleList, peopleName, allpospair_nums, outfile_dist_info, fix_num=24):
+def gen_diffpeople_Similarity(featsDict, peopleList, peopleName, feats, allpospair_nums, outfile_dist_info, fix_num=24):
     '''
     This method is to collect negative pair similarities
     '''
@@ -150,7 +154,7 @@ def gen_diffpeople_Similarity(featsDict, peopleList, peopleName, allpospair_nums
                 repetition.append(compared_imgname[rand_num])
                 imgdiff_list1.append(imgsName[i])
                 imgdiff_list2.append(compared_imgname[rand_num])
-                embedding_similarity = cos(featsDict[imgsName[i]][0], featsDict[compared_imgname[rand_num]][0])
+                embedding_similarity = cos(feats[i], feats[rand_num])
                 diff_similaritys.append(embedding_similarity)
                 similaritys.append(embedding_similarity)
                 rand_num += 1
@@ -182,7 +186,7 @@ def gen_distance(pos_similarity_dist, neg_similarity_dist, outfile):
     outfile = open(outfile, 'w')
     print('='*20 + 'OUTPUT' + '='*20)
     posimglist = list(pos_similarity_dist.keys())
-    negimglist = list(neg_similarity_dist.keys())
+    negimglist = list(pos_similarity_dist.keys())
     assert len(posimglist) == len(negimglist)
     imglists = posimglist
     for img in tqdm(imglists):
@@ -231,10 +235,10 @@ def norm_labels(data_root, outfile_wdistacne, id_score):
         imgname = i.split()[0]
         mean_wdistance = float(i.split()[1])
         if "outsider" in imgname:
-            imgpath.append(data_root + imgname.split("/")[1])
+            imgpath.append(data_root + imgname.split("/")[2] + "/" + imgname.split("/")[3])
             featpath.append(data_root + imgname.split("/")[2] + "/" + imgname.split("/")[3].replace(".jpg", ".npy"))
         else:
-            imgpath.append(data_root + imgname)
+            imgpath.append(data_root + imgname[1:])
             featpath.append(data_root + imgname.replace(".jpg", ".npy")[1:])
 
         quality_scores.append(mean_wdistance)
@@ -253,6 +257,21 @@ def norm_labels(data_root, outfile_wdistacne, id_score):
                             (np.max(quality_scores_select) - np.min(quality_scores_select)) * 100
     return featpath_select, imgpath_select, quality_scores_select
 
+def a_total_gen(quality_scores_metrix, featsDict, feats, peopleList, peopleName, create_dir, thread_num, return_back):
+    outfile_dist_info = f"{create_dir}/distribution_info_tmp_{thread_num}.txt"
+    outfile_wdistacne = f"{create_dir}/w_distances_{thread_num}.txt"
+    outfile_dist_info = open(outfile_dist_info, 'w')
+    pos_similarity_dist, pos_pairs_num = gen_samepeople_Similarity(featsDict, peopleList, \
+                                                peopleName, feats, outfile_dist_info)
+    neg_similarity_dist = gen_diffpeople_Similarity(featsDict, peopleList, peopleName, \
+                                                feats, pos_pairs_num, outfile_dist_info)
+    gen_distance(pos_similarity_dist, neg_similarity_dist, outfile_wdistacne)
+    id_score = cal_idscore(outfile_wdistacne)
+    featpath_select, imgpath_select, quality_scores_select = norm_labels(data_root, outfile_wdistacne, \
+                                                            id_score)
+    quality_scores_metrix[:,i] = quality_scores_select
+    return_back.append([featpath_select, imgpath_select])
+
 if __name__ == "__main__":
     '''
     This method is to generate quality pseudo scores by similarity distribution distance (SDD)
@@ -262,47 +281,37 @@ if __name__ == "__main__":
     data_root    = '/Data/'
     datalistFile = '/workspace/DATA.labelpath'
     featsFile    = '/workspace/DATA.labelfeature'
-    create_dir   = '/workspace/annotations'
+    create_dir   = '/workspace/annotations_small_batch'
     os.makedirs(create_dir, exist_ok=True)
-    outfile_dist_info = f"{create_dir}/distribution_info_tmp.txt"
-    outfile_wdistacne = f"{create_dir}/w_distances.txt"
+    # outfile_dist_info = f"{create_dir}/distribution_info_tmp.txt"
+    # outfile_wdistacne = f"{create_dir}/w_distances.txt"
     outfile_result    = f"{create_dir}/quality_pseudo_labels.txt"
-    outfile_dist_info = open(outfile_dist_info, 'w')
-    # print("[INFO]: Building people dictionary")
+    # outfile_dist_info = open(outfile_dist_info, 'w')
     # peopleName = ["A-San", "A-San", "B_San"]
     # peopleList = ("A-San", "B-San")
     # print("[INFO]: Creating quality_scores_metrix")
     # print("[INFO]: Generating similarities")
     with open(featsFile, 'r') as f: featlist = f.readlines()
-    # featlist = featlist[:1200]
+    featlist = featlist[:2000000]
+    print("[INFO]: Building people dictionary")
+    featsDict, peopleList, peopleName, feats = buildDict_people(featlist)
+    peopleName = np.array(peopleName)
+    
     quality_scores_metrix = np.zeros([len(featlist), 12]) # 12 pairs for all images
+    jobs = []
+    return_back = []
     for i in range(12):
-        print(f"[INFO]: Iter: {i}")
-        start = 0 # start emb         num_people = 1000 # total id in a chunk
-        peopleName = []
-        pos_similarity_dist = {}
-        neg_similarity_dist = {}
-        num_people = 500 # total id in a chunk
-        peopleName = []
-        pos_similarity_dist = {}
-        neg_similarity_dist = {}
-        while 1:
-            start, featsDict, peopleList, peopleName = buildDict_people(featlist, [start, num_people])
-            if len(peopleName) <=0:
-                break
-            _pos_similarity_dist, pos_pairs_num = gen_samepeople_Similarity(featsDict, peopleList, \
-                                                            peopleName, outfile_dist_info)
-            _neg_similarity_dist = gen_diffpeople_Similarity(featsDict, peopleList, peopleName, \
-                                                            pos_pairs_num, outfile_dist_info)
-            pos_similarity_dist.update(_pos_similarity_dist)
-            neg_similarity_dist.update(_neg_similarity_dist)
-        gen_distance(pos_similarity_dist, neg_similarity_dist, outfile_wdistacne)
-        id_score = cal_idscore(outfile_wdistacne)
-        featpath_select, imgpath_select, quality_scores_select = norm_labels(data_root, outfile_wdistacne, \
-                                                            id_score)
-        quality_scores_metrix[:,i] = quality_scores_select
+        this_job = threading.Thread(target=a_total_gen, args=(quality_scores_metrix, featsDict, feats, peopleList, peopleName, create_dir, i, return_back))
+        this_job.start()
+        jobs.append(this_job)
+        print(f"[INFO]: Job {i} started")
+        time.sleep(1.1)
+    
+    for job in jobs:
+        job.join()
+
     quality_pseudo_labels = np.mean(quality_scores_metrix, axis=1)
     outfile_result = open(outfile_result, 'w')
     # output quality pseudo labels
     for index, value in enumerate(quality_pseudo_labels):                      
-        outfile_result.write(featpath_select[index] + '\t' + str(value) + '\n')
+        outfile_result.write(return_back[0][1][index] + '\t' + str(value) + '\n')

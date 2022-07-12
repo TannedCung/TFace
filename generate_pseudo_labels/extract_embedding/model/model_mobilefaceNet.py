@@ -133,23 +133,26 @@ class MobileFaceNet(Module):
         This method is to initialize MobileFaceNet
         '''
         super(MobileFaceNet, self).__init__()
-        assert output_name in ["GNAP", 'GDC']
-        assert input_size[0] in [112]
-        self.conv1 = Conv_block(3, 64, kernel=(3,3), stride=(2,2), padding=(1,1))
-        self.conv2_dw = Conv_block(64, 64, kernel=(3,3), stride=(1,1), padding=(1,1), groups=64)
-        self.conv_23 = Depth_Wise(64, 64, kernel=(3,3), stride=(2,2), padding=(1,1), groups=128)
-        self.conv_3 = Residual(64, num_block=4, groups=128, kernel=(3,3), stride=(1,1), padding=(1,1))
-        self.conv_34 = Depth_Wise(64, 128, kernel=(3,3), stride=(2,2), padding=(1,1), groups=256)
-        self.conv_4 = Residual(128, num_block=6, groups=256, kernel=(3,3), stride=(1,1), padding=(1,1))
-        self.conv_45 = Depth_Wise(128, 128, kernel=(3,3), stride=(2,2), padding=(1,1), groups=512)
-        self.conv_5 = Residual(128, num_block=2, groups=256, kernel=(3,3), stride=(1,1), padding=(1,1))
-        self.conv_6_sep = Conv_block(128, 512, kernel=(1,1), stride=(1,1), padding=(0,0))
+        # assert output_name in ["GNAP", 'GDC']
+        # assert input_size[0] in [112]
+        # self.conv1 = Conv_block(3, 64, kernel=(3,3), stride=(2,2), padding=(1,1))
+        # self.conv2_dw = Conv_block(64, 64, kernel=(3,3), stride=(1,1), padding=(1,1), groups=64)
+        # self.conv_23 = Depth_Wise(64, 64, kernel=(3,3), stride=(2,2), padding=(1,1), groups=128)
+        # self.conv_3 = Residual(64, num_block=4, groups=128, kernel=(3,3), stride=(1,1), padding=(1,1))
+        # self.conv_34 = Depth_Wise(64, 128, kernel=(3,3), stride=(2,2), padding=(1,1), groups=256)
+        # self.conv_4 = Residual(128, num_block=6, groups=256, kernel=(3,3), stride=(1,1), padding=(1,1))
+        # self.conv_45 = Depth_Wise(128, 128, kernel=(3,3), stride=(2,2), padding=(1,1), groups=512)
+        # self.conv_5 = Residual(128, num_block=2, groups=256, kernel=(3,3), stride=(1,1), padding=(1,1))
+        # self.conv_6_sep = Conv_block(128, 512, kernel=(1,1), stride=(1,1), padding=(0,0))
         self.use_type = use_type            # ['Rec', 'Qua']
         if self.use_type == 'Qua':
-            self.quality = Sequential(Flatten(),
-                                    PReLU(512 * 7 * 7),
-                                    Dropout(0.5, inplace=False),
-                                    Linear(512 * 7 * 7, 1))
+            self.quality = Sequential(Conv_block(512, 512, kernel=(1,1), stride=(1,1), padding=(0,0)),
+                                    Conv_block(512, 128, kernel=(1,1), stride=(1,1), padding=(0,0)),
+                                    Flatten(),
+                                    PReLU(128 * 7 * 7),
+                                    Dropout(0.1, inplace=False),
+                                    # Linear(512 * 7 * 7, 512),
+                                    Linear(128 * 7 * 7, 1))
         else:
             if output_name == "GNAP":
                 self.output_layer = GNAP(embedding_size)
@@ -182,15 +185,16 @@ class MobileFaceNet(Module):
         if use for quality network, select self.use_type == "Qua"
         if use for recognition network, select self.use_type == "Rec"
         '''
-        out = self.conv1(x)
-        out = self.conv2_dw(out)
-        out = self.conv_23(out)
-        out = self.conv_3(out)
-        out = self.conv_34(out)
-        out = self.conv_4(out)
-        out = self.conv_45(out)
-        out = self.conv_5(out)
-        conv_features = self.conv_6_sep(out)
+        # out = self.conv1(x)
+        # out = self.conv2_dw(out)
+        # out = self.conv_23(out)
+        # out = self.conv_3(out)
+        # out = self.conv_34(out)
+        # out = self.conv_4(out)
+        # out = self.conv_45(out)
+        # out = self.conv_5(out)
+        # conv_features = self.conv_6_sep(out)
+        conv_features = x
         if self.use_type == "Qua":
             out = self.quality(conv_features)
         else:

@@ -10,6 +10,11 @@ import torch.nn.functional as F
 from dataset.dataset_txt import load_data as load_data_txt
 from config_test import config as conf
 from model import model_mobilefaceNet, model
+import sys
+sys.path.insert(1, "/workspace/data")
+
+from onnx_infer import OnnxInfer
+
 
 
 def dataSet():                                                     # Dataset setup
@@ -25,24 +30,27 @@ def backboneSet():                                                   # Network s
     Backbone setup 
     Load a Backbone for training, support MobileFaceNet(MFN) and ResNet50(R50)
     '''      
-    # MobileFaceNet
-    if conf.backbone == 'MFN':
-        net = model_mobilefaceNet.MobileFaceNet([112,112], conf.embedding_size, \
-                                output_name = 'GDC', use_type = "Rec").to(device)
-    # ResNet50
-    else:
-        net = model.R50([112, 112], use_type = "Rec").to(device)
-    # load trained model weights
-    if conf.eval_model != None:
-        net_dict = net.state_dict()     
-        eval_dict = torch.load(conf.eval_model, map_location=device)
-        eval_dict = {k.replace('module.', ''): v for k, v in eval_dict.items()}
-        same_dict =  {k: v for k, v in eval_dict.items() if k in net_dict}
-        net_dict.update(same_dict)
-        net.load_state_dict(net_dict)
-    # if use multi-GPUs
-    if device != 'cpu' and len(multi_GPUs) > 1:
-        net = nn.DataParallel(net, device_ids = multi_GPUs)
+    # # MobileFaceNet
+    # if conf.backbone == 'MFN':
+    #     net = model_mobilefaceNet.MobileFaceNet([112,112], conf.embedding_size, \
+    #                             output_name = 'GDC', use_type = "Rec").to(device)
+    # # ResNet50
+    # else:
+    #     net = model.R50([112, 112], use_type = "Rec").to(device)
+    # # load trained model weights
+    # if conf.eval_model != None:
+    #     net_dict = net.state_dict()     
+    #     eval_dict = torch.load(conf.eval_model, map_location=device)
+    #     eval_dict = {k.replace('module.', ''): v for k, v in eval_dict.items()}
+    #     same_dict =  {k: v for k, v in eval_dict.items() if k in net_dict}
+    #     net_dict.update(same_dict)
+    #     net.load_state_dict(net_dict)
+    # # if use multi-GPUs
+    # if device != 'cpu' and len(multi_GPUs) > 1:
+    #     net = nn.DataParallel(net, device_ids = multi_GPUs)
+    model_type = "webface"
+    net = OnnxInfer(weight_paths="/workspace/weights/webface_batch.onnx", type=model_type)
+    
     return net
 
 def compcos(feats1, feats2):                                         # Computing cosine distance
@@ -75,29 +83,45 @@ if __name__ == "__main__":
     device = conf.device
     multi_GPUs = conf.multi_GPUs
     net = backboneSet()
-    outfile = conf.outfile
+    # outfile = conf.outfile
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True 
     dataloader, class_num = dataSet()
+    # dataloader.dataset.transform = net.preprocess
     count = 0
-    net.eval()
+    # net.eval()
     with open(conf.img_list, 'r') as f: txtContent = f.readlines()
+    with open(conf.feat_list, 'r') as f: npyContent = f.readlines()
+
     # computer the number of sampes
     sample_num = len(txtContent)
     print(f'Sample_num = {sample_num}')
     feats = np.zeros([sample_num, conf.embedding_size])                             # initnte features of all samples
     with torch.no_grad():
         for datapath, data in tqdm(dataloader, total=len(dataloader)):
-            data = data.to(device)
-            embeddings = F.normalize(net(data), p=2, dim=1).cpu().numpy().squeeze()
+            # data = data.to(device)
+            # embeddings = F.normalize(net(data), p=2, dim=1).cpu().numpy().squeeze()
+            embeddings = net(data.numpy())
             start_idx = count * conf.batch_size
             end_idx = (count+1) * conf.batch_size
+            # saves = npyContent[start_idx:end_idx]
+            
+            for i in range(embeddings.shape[0]):
+                src = txtContent[start_idx+i].split()[0]
+                tar = npyContent[start_idx+i].split()[0]
+                assert src.split("/")[:-3] == tar.split("/")[:-3], f"Missalign src and target: {src} - {tar}"
+                assert src.split("/")[-1].replace(".jpg", ".npy") == tar.split("/")[-1], f"Missalign src and target: {src} - {tar}"
+                os.makedirs(os.path.dirname(os.path.dirname(tar)), exist_ok=True)
+                os.makedirs(os.path.dirname(tar), exist_ok=True)
+                np.save(tar, embeddings[i])
+                # print(f"{src} -> {tar}")
+
             # save embeddings of one iteration
-            try: feats[start_idx:end_idx, :] = embeddings
-            # save embeddings of the final iteration   
-            except: feats[start_idx:, :] = embeddings                              
+            # try: feats[start_idx:end_idx, :] = embeddings
+            # # save embeddings of the final iteration   
+            # except: feats[start_idx:, :] = embeddings                              
             count += 1
-        np.save(outfile, feats)
-        checkfeats = np.load(outfile)
-        print (np.shape(checkfeats))
-        print (outfile)
+        # np.save(outfile, feats)
+        # checkfeats = np.load(outfile)
+        # print (np.shape(checkfeats))
+        # print (outfile)
