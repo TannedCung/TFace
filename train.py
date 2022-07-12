@@ -8,6 +8,33 @@ from generate_pseudo_labels.extract_embedding.dataset.dataset_txt import load_da
 from train_config import config as conf
 import numpy as np
 
+import sys
+# sys.path.insert(1, "/research/classification/face.evolve/projects/face_mask/eval")
+from data.onnx_infer import OnnxInfer
+
+
+lr = None
+base_lr = conf.lr
+def adjust_learning_rate(optimizer, epoch, milestones=[5, 10]):
+    """Sets the learning rate: milestone is a list/tuple"""
+    warmup = 2
+
+    def to(epoch):
+        if epoch <= warmup:
+            return 1
+        elif warmup < epoch <= milestones[0]:
+            return 0
+        for i in range(1, len(milestones)):
+            if milestones[i - 1] < epoch <= milestones[i]:
+                return i
+        return len(milestones)
+
+    n = to(epoch)
+
+    global lr
+    lr = base_lr * (0.2 ** n)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
 
 class TrainQualityTask():
     """ TrainTask of quality model
@@ -61,15 +88,21 @@ class TrainQualityTask():
             print(f"LOSS TYPE = L2")
             criterion = nn.MSELoss(reduction='mean')
         # Optimizer
-        optimizer = optim.Adam(net.parameters(),
-                                lr = self.config.lr, 
-                                betas=(0.9, 0.99), 
-                                eps=1e-06,
-                                weight_decay=self.config.weight_decay)
+        # optimizer = optim.Adam(net.parameters(),
+        #                         lr = self.config.lr, 
+        #                         betas=(0.9, 0.99), 
+        #                         eps=1e-06,
+        #                         weight_decay=self.config.weight_decay)
+        optimizer = torch.optim.SGD(net.parameters(),
+                                lr=base_lr,
+                                momentum=0.9,
+                                weight_decay=5e-4,
+                                nesterov=True)
+
         # Scheduler
-        scheduler_gamma = 0.1
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.config.stepLR, gamma=scheduler_gamma)
-        return criterion, optimizer, scheduler
+        # scheduler_gamma = 0.1
+        # scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.config.stepLR, gamma=scheduler_gamma)
+        return criterion, optimizer, None
 
     def train(self, trainloader, net, epoch):
         # Train quality regression model
@@ -77,17 +110,37 @@ class TrainQualityTask():
         itersNum = 1
         os.makedirs(self.config.checkpoints, exist_ok=True)
         logfile = open(os.path.join(self.config.checkpoints, "log"), 'w')
+        
+        model_type = "webface"
+        onnx_net = OnnxInfer(weight_paths="weights/modified.onnx", type=model_type)
+        
         for e in range(epoch):
+            adjust_learning_rate(optimizer, e+1, conf.stepLR)
             loss_sum = 0
-            for _, data, labels in tqdm(trainloader, desc=f"Epoch {e+1}/{epoch}", total=len(trainloader)):
+            print(f"\n{'Epoch' : <10}{'gpu_mem' : ^10}{'loss' : >10}")
+            pbar = tqdm(trainloader, total=len(trainloader))
+            for i, (imgPaths, data, labels) in enumerate(pbar):
+                data = onnx_net(data.numpy())[1]
+                data = torch.from_numpy(data)
                 data = data.to(self.config.device)
                 labels = labels.to(self.config.device).float()
                 preds = net(data).squeeze()
                 loss = criterion(preds, labels)
-                loss_sum += np.mean(loss.cpu().detach().numpy())
+                iter_loss = np.mean(loss.cpu().detach().numpy())
+                loss_sum += iter_loss
+                loss_mean = loss_sum / (i+1)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                
+                mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)
+                s = (f"{f'{e+1}/{epoch}' : <10}"
+                    f"{mem : ^10}"
+                    # f"{f'{losses.val:.4f} ({losses.avg:.4f})' : ^20}"
+                    # f"{f'{top1.val:.3f} ({top1.avg:.3f})' : ^20}"
+                    f"{f'{iter_loss:.3f} ({loss_mean:.3f})' : >10}")
+                pbar.set_description(s)
+
                 if itersNum % self.config.display==0:
                     logfile = open(os.path.join(self.config.checkpoints, "log"), 'a')
                     logfile.write(f"Epoch {e+1} / {self.config.epoch} | {itersNum} Loss=" + '\t' + f"{loss}" + '\n')
@@ -100,7 +153,7 @@ class TrainQualityTask():
                 savePath = os.path.join(self.config.checkpoints, f"{self.config.checkpoints_name}_net_{e+1}epoch.pth")
                 torch.save(net.state_dict(), savePath)
                 print(f"SAVE MODEL: {savePath}")
-            scheduler.step()
+            # scheduler.step()
         return net
 
 if __name__ == "__main__":
@@ -111,6 +164,11 @@ if __name__ == "__main__":
     torch.manual_seed(conf.seed)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(conf.seed)
     net = train_task.backboneSet()
+    
+    for name, param in net.named_parameters():
+        if "quality" not in name:
+            param.requires_grad = False
+    
     trainloader = train_task.dataSet()
     criterion, optimizer, scheduler = train_task.trainSet(net)
     net = train_task.train(trainloader, net, epoch=conf.epoch)
